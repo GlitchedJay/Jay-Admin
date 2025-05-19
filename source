@@ -1,0 +1,2004 @@
+--[[░░░░░██╗░█████╗░██╗░░ ░██╗██╗░██████╗
+ ░░░░░██║██╔══██╗╚██╗░ ██╔╝╚█║██╔════╝
+ ░░░░░██║███████║░╚███ ╔╝░░╚╝╚█████╗░
+ ██╗░░██║██╔══██║░░╚█ █╔╝░░░░░░╚═══██╗
+ ╚█████╔╝██║░░██║░░░█ █║░░░░░░██████╔╝
+ ░╚════╝░╚═╝░░╚═╝░░░╚ ═╝░░░░░░╚═════╝░
+
+░█████╗░██████╗░███╗░░░███╗██╗███╗░░██╗
+██╔══██╗██╔══██╗████╗░████║██║████╗░██║
+███████║██║░░██║██╔████╔██║██║██╔██╗██║
+██╔══██║██║░░██║██║╚██╔╝██║██║██║╚████║
+██║░░██║██████╔╝██║░╚═╝░██║██║██║░╚███║
+╚═╝░░╚═╝╚═════╝░╚═╝░░░░░╚═╝╚═╝╚═╝░░╚══╝]]
+--//Services\\--
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local LPlayer = Players.LocalPlayer
+local Mouse = LPlayer:GetMouse()
+
+
+if not LPlayer.Character then
+    LPlayer.CharacterAdded:Wait()
+end
+
+local autoHealActive = false 
+local deleteModeActive = false 
+
+-- Ensure the Remotes and RemoteFunctions are properly set
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local StampAsset = Remotes:WaitForChild("StampAsset")
+local DeleteAsset = Remotes:WaitForChild("DeleteAsset")
+
+local ActiveParts
+local Plates = Workspace:WaitForChild("Plates")
+local LPlate
+local MSpikes = {}
+local loopFrozenPlayers = {}
+local loopKilledPlayers = {}
+local permFrozenPlayers = {}
+local orbitingParts = {}
+local tornadoCore = nil
+local tornadoActive = false
+local adminPlayers = {}  -- Players with admin access
+local playerAuras = {}  -- Auras for each player
+
+-- Automatically add the local player as admin
+adminPlayers[LPlayer.Name] = true
+
+-- Get the player's plate
+for _, Plate in pairs(Plates:GetChildren()) do
+    if Plate.Owner.Value == LPlayer then
+        LPlate = Plate.Plate
+        ActiveParts = Plate.ActiveParts
+        break
+    end
+end
+
+-- Manage active parts on the plate
+ActiveParts.ChildAdded:Connect(function(Block)
+    if Block.Name == "Spikes - Moving" then
+        local MSpike = Block:WaitForChild("Spike_Retracting"):WaitForChild("Spikes")
+        table.insert(MSpikes, MSpike)
+        Block.AncestryChanged:Wait()
+        if not Block.Parent then
+            table.remove(MSpikes, table.find(MSpikes, MSpike))
+        end
+    end
+end)
+
+local Module = {}
+
+function Module.CreateSpike(CF: CFrame, Weld: table)
+    if StampAsset then
+        return StampAsset:InvokeServer(41324903, CF, "{bf0c5c8b-6f25-4321-9251-300beb818121}", Weld or {}, 0)
+    end
+end
+
+-- Create Moving Spike Function
+function Module.CreateMSpike(CF: CFrame, Weld: table)
+    if StampAsset then
+        return StampAsset:InvokeServer(41324904, CF, "{fca81e11-1ead-4817-afde-4dc29e72ea1b}", Weld or {}, 0)
+    end
+end
+
+-- Weld Function
+function Module.Weld(...)
+    if StampAsset then
+        StampAsset:InvokeServer(
+            56451715,
+            LPlate.CFrame + Vector3.new(0, 200, 0),
+            "{3ae31e60-5cd0-4d80-96b6-a1dd894ece8a}",
+            {...},
+            0
+        )
+    end
+end
+
+function Module.Hang(Part: Part)
+    Module.CreateMSpike(
+        (LPlate.CFrame * CFrame.fromEulerAnglesXYZ(math.rad(math.random(0, 360)), math.rad(math.random(0, 360)), math.rad(math.random(0, 360)))) - Vector3.new(0, -5, 0),
+        {LPlate}
+    )
+    Module.Weld(Part, MSpikes[#MSpikes])
+end
+
+
+
+
+-- Utility to find players by name
+local function findPlayerByName(name)
+    for _, player in pairs(Players:GetPlayers()) do
+        if player.Name:lower():sub(1, #name) == name:lower() then
+            return player
+        end
+    end
+    return nil
+end
+
+-- Admin command system
+local function grantAdmin(targetPlayer)
+    adminPlayers[targetPlayer.Name] = true
+    print(targetPlayer.Name .. " has been granted admin access.")
+end
+
+local Aura
+function Module.DestroyAura(Radius: number, player)
+    if Aura then
+        Aura:Destroy()
+    end
+    Radius = Vector3.new(Radius, Radius, Radius)
+    local Blacklist = {}
+    local Hrp = player.Character.PrimaryPart
+    local Weld = Instance.new("Weld", Hrp)
+    Aura = Instance.new("Part", Hrp)
+    Aura.Size = Radius
+    Aura.Massless = true
+    Aura.Transparency = 0
+    Aura.Material = Enum.Material.ForceField
+    Aura.Color = Color3.new(1, 0, 0)
+    Aura.CanCollide = false
+    Aura.Shape = Enum.PartType.Ball
+    Aura.Touched:Connect(function(Part)
+        if Blacklist[Part] or Part.Anchored then
+            return
+        end
+        if Part.CFrame.Y <= LPlate.CFrame.Y + 4 then
+            return
+        end
+        if Part:IsDescendantOf(LPlayer.Character) then
+            return
+        end
+        Blacklist[Part] = true
+        Module.Hang(Part)
+    end)
+    Weld.Part0 = Hrp
+    Weld.Part1 = Aura
+    Aura.Destroying:Wait()
+    table.clear(Blacklist)
+    Blacklist = nil
+end
+
+function Module.Unaura(player)
+    if playerAuras[player] then
+        playerAuras[player]:Destroy()
+        playerAuras[player] = nil
+    end
+end
+
+-- Freeze command
+
+function Module.Freeze(player)
+    -- Check if we are passing a player or a part
+    if player:IsA("Player") then
+        -- Get the player's HumanoidRootPart
+        local character = player.Character
+        if character then
+            local rootPart = character:FindFirstChild("HumanoidRootPart")
+            if rootPart then
+                player = rootPart  -- Replace player with the HumanoidRootPart
+            else
+                warn("Player's HumanoidRootPart not found for freezing.")
+                return
+            end
+        else
+            warn("Player's character not found for freezing.")
+            return
+        end
+    end
+
+    -- Ensure we're now working with a BasePart (like HumanoidRootPart or similar)
+    if typeof(player) == "Instance" and player:IsA("BasePart") then
+        if StampAsset then
+            StampAsset:InvokeServer(
+                56447956,
+                LPlate.CFrame - Vector3.new(0, 5, 0),
+                "{3ee17b14-c66d-4cdd-8500-3782d1dceab5}",
+                {player},
+                0
+            )
+        end
+    else
+        warn("Invalid part or player passed to Freeze function.")
+    end
+end
+
+-- LoopFreeze command
+function Module.LoopFreeze(player)
+    loopFrozenPlayers[player.Name] = true
+    Module.Freeze(player)
+
+    player.CharacterAdded:Connect(function(character)
+        local rootPart = character:WaitForChild("HumanoidRootPart", 10)
+        if rootPart then
+            Module.Freeze(player)
+        end
+    end)
+end
+
+-- UnloopFreeze command
+function Module.UnloopFreeze(playerName)
+    loopFrozenPlayers[playerName] = nil
+end
+
+-- Kill command
+function Module.Kill(player)
+    if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+        StampAsset:InvokeServer(41324885, LPlate.CFrame - Vector3.new(0, 9e9, 0), "{99ab22df-ca29-4143-a2fd-0a1b79db78c2}", {player.Character.HumanoidRootPart}, 0)
+    end
+end
+
+-- LoopKill command
+function Module.LoopKill(player)
+    loopKilledPlayers[player.Name] = true
+    Module.Kill(player)
+
+    player.CharacterAdded:Connect(function(character)
+        local rootPart = character:WaitForChild("HumanoidRootPart", 10)
+        if rootPart then
+            Module.Kill(player)
+        end
+    end)
+end
+
+function Module.UnloopKill(playerName)
+    loopKilledPlayers[playerName] = nil
+end
+
+-- Function to get unanchored parts in the Workspace
+function getUnanchoredParts(parent)
+    local unanchoredParts = {}
+    for _, child in pairs(parent:GetDescendants()) do
+        if child:IsA("BasePart") and not child.Anchored and not isPartOfCharacter(child) then
+            table.insert(unanchoredParts, child)
+        end
+    end
+    return unanchoredParts
+end
+
+-- Function to check if a part is part of a player's character
+function isPartOfCharacter(part)
+    for _, player in pairs(Players:GetPlayers()) do
+        if player.Character and part:IsDescendantOf(player.Character) then
+            return true
+        end
+    end
+    return false
+end
+
+function Module.Bring(player)
+    -- Ensure we're passing a valid player
+    if player and player.Character then
+        -- Get the target player's HumanoidRootPart and the local player's HumanoidRootPart
+        local rootPart = player.Character:FindFirstChild("HumanoidRootPart")
+        local adminRootPart = LPlayer.Character:FindFirstChild("HumanoidRootPart")
+
+        -- Check if both root parts exist
+        if rootPart and adminRootPart then
+            -- Ensure LPlate exists and get its position
+            if LPlate then
+                -- Find "ActiveParts" either as a child of LPlate or nearby
+                local activeParts = LPlate:FindFirstChild("ActiveParts") or LPlate.Parent:FindFirstChild("ActiveParts")
+
+                -- Check if ActiveParts exists
+                if activeParts then
+                    -- First weld asset (Ice - Block 1, or Weld1)
+                    local weld1 = activeParts:FindFirstChild("Ice - Block")
+
+                    -- If the Ice - Block (Weld1) asset does not exist, create it
+                    if not weld1 then
+                        print("Ice - Block asset (Weld1) not found, attempting to create it...")
+
+                        -- Create Weld1 using the StampAsset remote function
+                        weld1 = StampAsset:InvokeServer(
+                            41324903,  -- Asset ID for the Ice - Block (Weld1)
+                            LPlate.CFrame + Vector3.new(0, 10, 0),  -- Create Weld1 (Ice - Block) 10 studs above LPlate
+                            "{bf0c5c8b-6f25-4321-9251-300beb818121}",  -- Unique identifier
+                            {},  -- No welds at this point
+                            0
+                        )
+
+                        -- Check if the action was successful
+                        if not weld1 or typeof(weld1) ~= "Instance" then
+                            warn("Failed to create or retrieve the Ice - Block (Weld1) asset. Returned:", weld1)
+                            return
+                        else
+                            print("Ice - Block (Weld1) asset successfully created:", weld1)
+                        end
+                    else
+                        print("Ice - Block (Weld1) asset found in ActiveParts.")
+                    end
+
+                    -- Teleport Weld1 (Ice - Block) to the target's HumanoidRootPart position
+                    weld1.PrimaryPart.CFrame = rootPart.CFrame
+
+                    -- Wait for 0.1 seconds before proceeding with weld
+                    wait(0.1)
+
+                    -- Weld the target to Weld1 using Module.Weld
+                    Module.Weld(rootPart, weld1.PrimaryPart)
+
+                    -- Second weld asset (Ice - Block 2, or Weld2)
+                    local weld2 = activeParts:FindFirstChild("Ice - Block 2")
+
+                    -- If the Weld2 asset does not exist, create it
+                    if not weld2 then
+                        print("Ice - Block asset (Weld2) not found, attempting to create it...")
+
+                        -- Create Weld2 using the StampAsset remote function
+                        weld2 = StampAsset:InvokeServer(
+                            41324904,  -- Asset ID for Ice - Block (Weld2)
+                            LPlate.CFrame + Vector3.new(0, 10, 0),  -- Create Weld2 (Ice - Block) 10 studs above LPlate
+                            "{fca81e11-1ead-4817-afde-4dc29e72ea1b}",  -- Unique identifier
+                            {},  -- No welds at this point
+                            0
+                        )
+
+                        -- Check if the action was successful
+                        if not weld2 or typeof(weld2) ~= "Instance" then
+                            warn("Failed to create or retrieve the Ice - Block (Weld2) asset. Returned:", weld2)
+                            return
+                        else
+                            print("Ice - Block (Weld2) asset successfully created:", weld2)
+                        end
+                    else
+                        print("Ice - Block (Weld2) asset found in ActiveParts.")
+                    end
+
+                    -- Weld Weld2 to Weld1
+                    Module.Weld(weld1.PrimaryPart, weld2.PrimaryPart)
+
+                    -- Finally, teleport Weld2 (and everything attached) to the LocalPlayer/admin's position
+                    weld2.PrimaryPart.CFrame = adminRootPart.CFrame + Vector3.new(5, 0, 0)
+
+                    -- Unanchor Weld2 after teleportation
+                    weld2.PrimaryPart.Anchored = false
+
+                    -- Debug: Log final teleportation
+                    print("Ice - Block (Weld2) asset teleported to the local player/admin")
+                else
+                    warn("'ActiveParts' not found in or near LPlate.")
+                end
+            else
+                warn("LPlate not found.")
+            end
+        else
+            warn("HumanoidRootPart not found for bring command.")
+        end
+    else
+        warn("Player's character not found for bring command.")
+    end
+end
+
+-- Tornado Variables
+local tornadoCore = nil
+local tornadoActive = false
+local tornadoNetwork = nil
+local orbitingParts = {}
+local maxHeight = 500
+local orbitingHeights = {}
+local maxParts = 500  -- Set a limit on the number of parts in the tornado network
+local tornadoInPath = false
+
+-- Function to check if a part belongs to a player's character
+local function isPlayerPart(part)
+    for _, player in pairs(game.Players:GetPlayers()) do
+        if player.Character and part:IsDescendantOf(player.Character) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Function to check if a part belongs to the local player
+local function isLocalPlayerPart(part)
+    local character = LPlayer.Character
+    return character and part:IsDescendantOf(character)
+end
+
+-- Function to assign a unique height to a part
+local function assignUniqueHeight()
+    local height = math.random(1, maxHeight)
+    while orbitingHeights[height] do
+        height = math.random(1, maxHeight)
+    end
+    orbitingHeights[height] = true
+    return height
+end
+
+-- Function to apply fling properties to a part
+local function applyFlingProperties(part)
+    if part and part:IsA("BasePart") and not part.Anchored then
+        for _, x in ipairs(part:GetChildren()) do
+            if x:IsA("BodyAngularVelocity") or x:IsA("BodyForce") or x:IsA("BodyGyro") or x:IsA("BodyPosition") or x:IsA("BodyThrust") or x:IsA("BodyVelocity") or x:IsA("RocketPropulsion") then
+                x:Destroy()
+            end
+        end
+        part.CanCollide = false
+        local Torque = Instance.new("Torque", part)
+        Torque.Torque = Vector3.new(100000, 100000, 100000)
+        local AlignPosition = Instance.new("AlignPosition", part)
+        local Attachment = Instance.new("Attachment", part)
+        Torque.Attachment0 = Attachment
+        AlignPosition.MaxForce = 9999999999999999
+        AlignPosition.MaxVelocity = math.huge
+        AlignPosition.Responsiveness = 200
+        AlignPosition.Attachment0 = Attachment
+    end
+end
+
+-- Tornado Functions
+function startTornado()
+    if tornadoActive then return end
+    tornadoActive = true
+
+    -- Initialize the tornado network
+    tornadoNetwork = {
+        BaseParts = {},
+        Velocity = Vector3.new(0, 50, 0),  -- Simulate upward tornado force
+        SpinVelocity = Vector3.new(0, 0, 50)  -- Add spin force for the tornado
+    }
+
+    -- Function to add parts to the tornado network
+    tornadoNetwork.RetainPart = function(part)
+        -- Exclude player parts and LocalPlayer parts
+        if typeof(part) == "Instance" and part:IsA("BasePart") and part:IsDescendantOf(Workspace) and not isPlayerPart(part) and not isLocalPlayerPart(part) then
+            -- Add to the network if not already in it and limit the number of parts
+            if #tornadoNetwork.BaseParts < maxParts and not table.find(tornadoNetwork.BaseParts, part) then
+                table.insert(tornadoNetwork.BaseParts, part)
+                applyFlingProperties(part)  -- Make the part flingable
+            end
+        end
+    end
+
+    -- Tornado core
+    tornadoCore = Instance.new("Part")
+    tornadoCore.Anchored = true
+    tornadoCore.CanCollide = false
+    tornadoCore.Transparency = 1
+    tornadoCore.Size = Vector3.new(1, 1, 1)
+    tornadoCore.Position = Vector3.new(0, 5, 0)
+    tornadoCore.Parent = Workspace
+
+    -- Function to simulate the tornado's effect on parts
+    local function simulateTornadoPart(part, data)
+        -- Calculate the current angle and radius
+        data.angle = data.angle + 0.05  -- Increment the angle for swirling
+        local offsetX = math.cos(data.angle) * data.radius
+        local offsetZ = math.sin(data.angle) * data.radius
+
+        -- Keep the part at its assigned height, swirling around the X and Z axes
+        local height = data.height  -- The fixed height for this part
+
+        -- Update the part's position to swirl around the tornado core on the X and Z axes, at its unique height
+        local newPosition = tornadoCore.Position + Vector3.new(offsetX, height - part.Position.Y, offsetZ)
+        part.Velocity = (newPosition - part.Position) * 2  -- Apply velocity toward the new position
+    end
+
+    -- Create the tornado effect and move the parts in a circular motion
+    RunService.RenderStepped:Connect(function(deltaTime)
+        if not tornadoActive then return end
+        for part, data in pairs(orbitingParts) do
+            -- Check if the part is still in the workspace
+            if not part:IsDescendantOf(Workspace) then
+                orbitingParts[part] = nil  -- Remove part if it's not in the workspace
+            else
+                simulateTornadoPart(part, data)  -- Move the part according to the tornado's effect
+            end
+        end
+    end)
+
+    -- Gradually add parts to the tornado network as they become unanchored
+    Workspace.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("BasePart") and not descendant.Anchored then
+            tornadoNetwork.RetainPart(descendant)
+
+            -- Apply tornado movement
+            if not orbitingParts[descendant] then
+                local initialAngle = math.random() * 2 * math.pi
+                local radius = math.random(30, 50)  -- Adjust the radius for the tornado's thickness
+                local height = assignUniqueHeight()
+
+                orbitingParts[descendant] = {
+                    angle = initialAngle,
+                    radius = radius,
+                    height = height  -- Set the part's fixed height
+                }
+            end
+        end
+    end)
+end
+
+function bringTornadoToPlayer()
+    if tornadoCore then
+        local targetPosition = LPlayer.Character.HumanoidRootPart.Position
+        local tweenInfo = TweenInfo.new(2, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+        local tween = TweenService:Create(tornadoCore, tweenInfo, {Position = targetPosition})
+        tween:Play()
+    end
+end
+
+function stopTornado()
+    tornadoActive = false
+    if tornadoCore then
+        tornadoCore:Destroy()
+        tornadoCore = nil
+    end
+    orbitingParts = {}
+    orbitingHeights = {}  -- Reset used heights
+    tornadoNetwork = nil  -- Clear the tornado network when stopped
+end
+
+LPlayer.CharacterAdded:Connect(function(newCharacter)
+    -- Wait for the HumanoidRootPart to be added
+    local humanoidRootPart = newCharacter:WaitForChild("HumanoidRootPart")
+    
+    -- Ensure LocalPlayer's parts are excluded from the tornado network
+    for part, _ in pairs(orbitingParts) do
+        if isLocalPlayerPart(part) then
+            orbitingParts[part] = nil
+        end
+    end
+end)
+
+-- Ensure TweenService is defined
+local TweenService = game:GetService("TweenService")
+
+local function pathTornadoCommand()
+    local tornadoInPath = false
+    local tornadoSpeed = 50
+    local mapSize = Vector3.new(538, 1, 538)
+
+    -- Find tornadoCore in the Workspace
+    local tornadoCore = Workspace:FindFirstChild("tornadoCore")
+
+    -- Check if tornadoCore exists
+    if not tornadoCore then
+        warn("Tornado core not found in the Workspace.")
+        return
+    end
+
+    -- Ensure tornado is active
+    if not tornadoActive then
+        warn("Tornado must be started before creating a path.")
+        return
+    end
+
+    if tornadoInPath then
+        warn("Tornado is already following a path. Please wait until it reaches the endpoint.")
+        return
+    end
+
+    local function generateRandomPath()
+        local path = {}
+        local startPoint = tornadoCore.Position
+        local currentPoint = startPoint
+        local pathLength = math.random(5, 10)  -- Number of segments in the path
+
+        for i = 1, pathLength do
+            local randomPathType = math.random(1, 3)  -- 1 = straight, 2 = curve, 3 = zigzag
+            local randomDirection = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1)).Unit
+            local randomLength = math.random(50, 100)  -- Random length for the segment
+
+            if randomPathType == 1 then
+                currentPoint = currentPoint + randomDirection * randomLength
+            elseif randomPathType == 2 then
+                for j = 1, math.random(3, 6) do
+                    local curveDirection = randomDirection + Vector3.new(math.random(-1, 1), 0, math.random(-1, 1)).Unit * 0.1
+                    currentPoint = currentPoint + curveDirection.Unit * (randomLength / 6)
+                    table.insert(path, currentPoint)
+                end
+            elseif randomPathType == 3 then
+                for j = 1, math.random(3, 6) do
+                    local zigzagDirection = Vector3.new(randomDirection.Z, 0, randomDirection.X)
+                    currentPoint = currentPoint + zigzagDirection * (randomLength / 6)
+                    table.insert(path, currentPoint)
+                end
+            end
+            currentPoint = Vector3.new(
+                math.clamp(currentPoint.X, -mapSize.X / 2, mapSize.X / 2),
+                currentPoint.Y,
+                math.clamp(currentPoint.Z, -mapSize.Z / 2, mapSize.Z / 2)
+            )
+            table.insert(path, currentPoint)
+        end
+        return path
+    end
+
+    local function followPath(path)
+        tornadoInPath = true
+        local nextPointIndex = 1
+        local currentTween = nil
+
+        local function moveToNextPoint()
+            if nextPointIndex > #path then
+                tornadoInPath = false
+                return
+            end
+
+            local targetPoint = path[nextPointIndex]
+            local distance = (tornadoCore.Position - targetPoint).Magnitude
+            local tweenInfo = TweenInfo.new(distance / tornadoSpeed, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+
+            local success, err = pcall(function()
+                currentTween = TweenService:Create(tornadoCore, tweenInfo, { Position = targetPoint })
+                currentTween:Play()
+            end)
+
+            if not success then
+                warn("Error creating tween: ", err)
+                return
+            end
+
+            currentTween.Completed:Connect(function()
+                nextPointIndex = nextPointIndex + 1
+                moveToNextPoint()
+            end)
+        end
+
+        moveToNextPoint()
+    end
+
+    local path = generateRandomPath()
+    if #path > 0 then
+        followPath(path)
+    else
+        warn("Generated path is empty.")
+    end
+end
+
+function startClassicBlackHole(player)
+    local RunService = game:GetService("RunService")
+    local Workspace = game:GetService("Workspace")
+    local LocalPlayer = player or LPlayer
+    local humanoidRootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") or LocalPlayer.CharacterAdded:Wait():WaitForChild("HumanoidRootPart")
+
+    local Folder = Instance.new("Folder", Workspace)
+    local Part = Instance.new("Part", Folder)
+    local Attachment1 = Instance.new("Attachment", Part)
+    Part.Anchored = true
+    Part.CanCollide = false
+    Part.Transparency = 1
+
+    -- Variables to store orbit speed and radius
+    local orbitSpeed = 1  -- Default orbit speed
+    local orbitRadius = 15  -- Default orbit radius
+
+    -- Network simulation for blackhole
+    if not getgenv().Network then
+        getgenv().Network = {
+            BaseParts = {},
+            Velocity = Vector3.new(14.46262424, 14.46262424, 14.46262424)
+        }
+
+        Network.RetainPart = function(Part)
+            if typeof(Part) == "Instance" and Part:IsA("BasePart") and Part:IsDescendantOf(Workspace) then
+                table.insert(Network.BaseParts, Part)
+                Part.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0, 0, 0)
+                Part.CanCollide = false
+            end
+        end
+
+        local function EnablePartControl()
+            LocalPlayer.ReplicationFocus = Workspace
+            RunService.Heartbeat:Connect(function()
+                sethiddenproperty(LocalPlayer, "SimulationRadius", math.huge)
+                for _, Part in pairs(Network.BaseParts) do
+                    if Part:IsDescendantOf(Workspace) then
+                        Part.Velocity = Network.Velocity
+                    end
+                end
+            end)
+        end
+
+        EnablePartControl()
+    end
+
+    -- Force parts to be pulled towards blackhole
+    local function ForcePart(v)
+        if v:IsA("Part") and not v.Anchored and not v.Parent:FindFirstChild("Humanoid") and not v.Parent:FindFirstChild("Head") and v.Name ~= "Handle" then
+            for _, x in next, v:GetChildren() do
+                if x:IsA("BodyAngularVelocity") or x:IsA("BodyForce") or x:IsA("BodyGyro") or x:IsA("BodyPosition") or x:IsA("BodyThrust") or x:IsA("BodyVelocity") or x:IsA("RocketPropulsion") then
+                    x:Destroy()
+                end
+            end
+            v.CanCollide = false
+            local Torque = Instance.new("Torque", v)
+            Torque.Torque = Vector3.new(100000, 100000, 100000)
+            local AlignPosition = Instance.new("AlignPosition", v)
+            local Attachment2 = Instance.new("Attachment", v)
+            Torque.Attachment0 = Attachment2
+            AlignPosition.MaxForce = 9999999999999999
+            AlignPosition.MaxVelocity = math.huge
+            AlignPosition.Responsiveness = 200
+            AlignPosition.Attachment0 = Attachment2
+            AlignPosition.Attachment1 = Attachment1
+        end
+    end
+
+    -- Blackhole Active state
+    local blackHoleActive = true
+    local orbitBlackholeActive = false  -- Variable to toggle orbit
+    local splitBlackholeActive = false  -- Variable for split blackhole
+
+    -- Function to toggle black hole behavior
+    local function toggleBlackHole()
+        if orbitBlackholeActive then
+            orbitBlackholeActive = false
+            orbitBlackholeButton.Text = "Activate Orbit Black Hole"
+        end
+
+        blackHoleActive = not blackHoleActive
+        if blackHoleActive then
+            for _, v in next, Workspace:GetDescendants() do
+                ForcePart(v)
+            end
+
+            Workspace.DescendantAdded:Connect(function(v)
+                if blackHoleActive then
+                    ForcePart(v)
+                end
+            end)
+
+            spawn(function()
+                while blackHoleActive and RunService.RenderStepped:Wait() do
+                    Attachment1.WorldCFrame = humanoidRootPart.CFrame
+                end
+            end)
+        else
+            Part.CFrame = humanoidRootPart.CFrame  -- Reset the part's position when deactivating the black hole
+        end
+    end
+
+    -- Function to toggle orbit blackhole
+    local function toggleOrbitBlackhole()
+        orbitBlackholeActive = not orbitBlackholeActive
+        if orbitBlackholeActive then
+            spawn(function()
+                local angle = 0
+
+                while orbitBlackholeActive and RunService.RenderStepped:Wait() do
+                    angle = angle + orbitSpeed * math.rad(1)
+
+                    local humanoidPosition = humanoidRootPart.Position
+                    local offsetX = math.cos(angle) * orbitRadius
+                    local offsetZ = math.sin(angle) * orbitRadius
+
+                    local newPosition = humanoidPosition + Vector3.new(offsetX, 0, offsetZ)
+
+                    Part.CFrame = CFrame.new(newPosition, humanoidPosition)
+                end
+            end)
+        else
+            Part.CFrame = humanoidRootPart.CFrame  -- Reset the part's position when orbiting is toggled off
+        end
+    end
+
+local splitBlackholeActive = false  -- Initially set to disabled
+
+local function toggleSplitBlackhole()
+    if splitBlackholeActive then
+        -- Disable SplitBlackhole: Destroy all networks and mini parts
+        splitBlackholeActive = false
+
+        -- Destroy all networks and mini parts
+        for i, network in ipairs(miniBlackHoleNetworks) do
+            destroyNetwork(network)
+        end
+
+        -- Remove all mini parts
+        for _, miniPart in ipairs(miniParts) do
+            miniPart:Destroy()
+        end
+
+        -- Clear the mini parts and networks
+        miniBlackHoleNetworks = {}
+        miniParts = {}
+
+        print("SplitBlackhole disabled.")
+    else
+        -- Enable SplitBlackhole: Create networks and mini parts
+        splitBlackholeActive = true
+
+        -- Global part tracking to avoid parts being added to multiple networks
+        local globalTrackedParts = {}
+
+        local function trackPartInGlobal(part)
+            if globalTrackedParts[part] then
+                return false  -- Already tracked by another network
+            else
+                globalTrackedParts[part] = true
+                return true
+            end
+        end
+
+        local function untrackPartFromGlobal(part)
+            globalTrackedParts[part] = nil  -- Remove part from tracking
+        end
+
+        -- Local player and character setup
+        local humanoidRootPart = LPlayer.Character and LPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if not humanoidRootPart then
+            return  -- Exit if no HumanoidRootPart is found
+        end
+
+        -- Store mini black hole networks and parts
+        miniBlackHoleNetworks = {}
+        miniParts = {}
+
+        -- Create 7 mini black hole parts and assign a network to each
+        for i = 1, 7 do
+            -- Create mini black hole part
+            local miniPart = Instance.new("Part", Workspace)
+            miniPart.Name = "MiniPart" .. i
+            miniPart.Size = Vector3.new(10, 10, 10)  -- Same size as the blackhole part
+            miniPart.CanCollide = false
+            miniPart.Anchored = true
+            miniPart.Transparency = 1  -- Invisible parts
+            miniPart.Position = humanoidRootPart.Position  -- Start at the player's position
+            miniPart.Material = Enum.Material.Neon
+            miniPart.BrickColor = BrickColor.new("Really black")
+
+            -- Attach an attachment to each mini part (needed for alignment)
+            local miniAttachment = Instance.new("Attachment", miniPart)
+
+            -- Store the mini part
+            table.insert(miniParts, miniPart)
+
+            -- Create a new network for each mini black hole
+            miniBlackHoleNetworks[i] = {
+                BaseParts = {},
+                Velocity = Vector3.new(math.random(10, 20), math.random(10, 20), math.random(10, 20))  -- Random velocity for each
+            }
+
+            -- Define RetainPart for the mini black hole network
+            miniBlackHoleNetworks[i].RetainPart = function(Part)
+                -- Exclude player characters
+                if Part:IsDescendantOf(LPlayer.Character) then
+                    return  -- Skip player parts
+                end
+
+                -- Add the part if it passes the exclusion and is not globally tracked
+                if typeof(Part) == "Instance" and Part:IsA("BasePart") and Part:IsDescendantOf(Workspace) then
+                    if trackPartInGlobal(Part) then  -- Only add part if not already tracked globally
+                        table.insert(miniBlackHoleNetworks[i].BaseParts, Part)
+                        Part.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0, 0, 0)
+                        Part.CanCollide = false
+                    end
+                end
+            end
+        end
+
+        -- Function to force a part to be attracted to the mini black hole network
+        local function ForcePartToNetwork(v, networkIndex)
+            if v:IsA("Part") and not v.Anchored and not v.Parent:FindFirstChild("Humanoid") and not v.Parent:FindFirstChild("Head") and v.Name ~= "Handle" then
+                for _, x in next, v:GetChildren() do
+                    if x:IsA("BodyAngularVelocity") or x:IsA("BodyForce") or x:IsA("BodyGyro") or x:IsA("BodyPosition") or x:IsA("BodyThrust") or x:IsA("BodyVelocity") or x:IsA("RocketPropulsion") then
+                        x:Destroy()
+                    end
+                end
+                v.CanCollide = false
+                local Torque = Instance.new("Torque", v)
+                Torque.Torque = Vector3.new(100000, 100000, 100000)
+                local AlignPosition = Instance.new("AlignPosition", v)
+                local Attachment2 = Instance.new("Attachment", v)
+                Torque.Attachment0 = Attachment2
+                AlignPosition.MaxForce = 9999999999999999
+                AlignPosition.MaxVelocity = math.huge
+                AlignPosition.Responsiveness = 200
+                AlignPosition.Attachment0 = Attachment2
+                AlignPosition.Attachment1 = miniParts[networkIndex]:FindFirstChild("Attachment")
+            end
+        end
+
+        -- Function to randomly assign parts to one of the 7 mini black hole networks
+        Workspace.DescendantAdded:Connect(function(descendant)
+            if descendant:IsA("BasePart") and not descendant.Anchored then
+                local randomNetwork = math.random(1, 7)
+                miniBlackHoleNetworks[randomNetwork].RetainPart(descendant)
+                ForcePartToNetwork(descendant, randomNetwork)
+            end
+        end)
+
+        -- Set mini black holes to follow the player in a circular formation
+        RunService.Heartbeat:Connect(function()
+            for i, miniPart in ipairs(miniParts) do
+                local angle = i * math.pi / 3.5  -- Spread them evenly around the player
+                miniPart.Position = humanoidRootPart.Position + Vector3.new(math.cos(angle) * 10, 0, math.sin(angle) * 10)
+            end
+
+            -- Update each network's parts to follow their mini black hole
+            for i, network in ipairs(miniBlackHoleNetworks) do
+                for _, part in ipairs(network.BaseParts) do
+                    if part:IsDescendantOf(Workspace) then
+                        part.Velocity = network.Velocity
+                    end
+                end
+            end
+        end)
+
+        print("SplitBlackhole enabled.")
+    end
+end
+
+local function createControlFrame()
+    -- Check if the GUI already exists to prevent duplication
+    if LocalPlayer:FindFirstChild("PlayerGui"):FindFirstChild("BlackHoleControlGUI") then
+        return
+    end
+
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "BlackHoleControlGUI"
+    screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+    -- Create the main draggable frame
+    local controlFrame = Instance.new("Frame")
+    controlFrame.Name = "ControlFrame"
+    controlFrame.Size = UDim2.new(0, 250, 0, 400) -- Adjust the size to fit all buttons
+    controlFrame.Position = UDim2.new(0.5, -125, 0, 100)  -- Centered horizontally
+    controlFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50) -- Dark gray color
+    controlFrame.BackgroundTransparency = 0.2
+    controlFrame.Parent = screenGui
+    controlFrame.Active = true -- Make the frame active to enable dragging
+    controlFrame.Draggable = true -- Make the frame draggable
+
+    -- Add rounded corners to the frame
+    local uiCorner = Instance.new("UICorner")
+    uiCorner.CornerRadius = UDim.new(0, 12) -- Adjust for more or less roundness
+    uiCorner.Parent = controlFrame
+
+    -- Add rainbow UIStroke animation to the frame
+    local uiStroke = Instance.new("UIStroke")
+    uiStroke.Parent = controlFrame
+    uiStroke.Thickness = 4
+
+    -- Function to animate the rainbow color
+    local function rainbowAnimation()
+        local hue = 0
+        while true do
+            hue = (hue + 0.005) % 1  -- Increment hue for the rainbow effect
+            uiStroke.Color = Color3.fromHSV(hue, 1, 1)  -- Change color smoothly over time
+            wait(0.05)
+        end
+    end
+
+    -- Start the rainbow animation
+    spawn(rainbowAnimation)
+
+    -- General button styling function
+    local function styleButton(button)
+        button.Size = UDim2.new(1, -20, 0, 50) -- Buttons will fill the frame horizontally with padding
+        button.BackgroundColor3 = Color3.fromRGB(0, 0, 0)  -- Black background
+        button.BackgroundTransparency = 0.3  -- Slight transparency
+        button.TextColor3 = Color3.fromRGB(255, 255, 255)  -- White text
+        button.TextScaled = true  -- Auto scale text
+
+        -- Add UICorner for rounded edges
+        local uiCornerButton = Instance.new("UICorner")
+        uiCornerButton.CornerRadius = UDim.new(0, 10)
+        uiCornerButton.Parent = button
+
+        -- Add UIStroke for the border and set to black
+        local borderStroke = Instance.new("UIStroke")
+        borderStroke.Parent = button
+        borderStroke.Thickness = 2
+        borderStroke.Color = Color3.fromRGB(0, 0, 0)  -- Black border
+    end
+
+    -- Create buttons for the black hole control
+    local toggleBlackholeButton = Instance.new("TextButton")
+    toggleBlackholeButton.Name = "ToggleBlackHoleButton"
+    toggleBlackholeButton.Text = "Deactivate Black Hole"
+    toggleBlackholeButton.Parent = controlFrame
+    toggleBlackholeButton.Position = UDim2.new(0, 10, 0, 20)  -- Top with padding
+    styleButton(toggleBlackholeButton)
+
+    local orbitBlackholeButton = Instance.new("TextButton")
+    orbitBlackholeButton.Name = "OrbitBlackHoleButton"
+    orbitBlackholeButton.Text = "Activate Orbit Black Hole"
+    orbitBlackholeButton.Parent = controlFrame
+    orbitBlackholeButton.Position = UDim2.new(0, 10, 0, 80)  -- Below the first button
+    styleButton(orbitBlackholeButton)
+
+    local splitBlackholeButton = Instance.new("TextButton")
+    splitBlackholeButton.Name = "SplitBlackHoleButton"
+    splitBlackholeButton.Text = "Split Black Hole"
+    splitBlackholeButton.Parent = controlFrame
+    splitBlackholeButton.Position = UDim2.new(0, 10, 0, 140)  -- Below the second button
+    styleButton(splitBlackholeButton)
+
+    -- TextBox for Orbit Speed
+    local orbitSpeedTextBox = Instance.new("TextBox")
+    orbitSpeedTextBox.Name = "OrbitSpeedTextBox"
+    orbitSpeedTextBox.Text = "1"  -- Default speed value
+    orbitSpeedTextBox.Parent = controlFrame
+    orbitSpeedTextBox.Position = UDim2.new(0, 10, 0, 200)
+    styleButton(orbitSpeedTextBox)
+
+    -- TextBox for Orbit Radius
+    local orbitRadiusTextBox = Instance.new("TextBox")
+    orbitRadiusTextBox.Name = "OrbitRadiusTextBox"
+    orbitRadiusTextBox.Text = "15"  -- Default radius value
+    orbitRadiusTextBox.Parent = controlFrame
+    orbitRadiusTextBox.Position = UDim2.new(0, 10, 0, 260)
+    styleButton(orbitRadiusTextBox)
+
+    -- Connect buttons to their respective functions
+    toggleBlackholeButton.MouseButton1Click:Connect(function()
+        toggleBlackHole()
+        if blackHoleActive then
+            toggleBlackholeButton.Text = "Deactivate Black Hole"
+        else
+            toggleBlackholeButton.Text = "Activate Black Hole"
+        end
+    end)
+
+    orbitBlackholeButton.MouseButton1Click:Connect(function()
+        toggleOrbitBlackhole()
+        if orbitBlackholeActive then
+            orbitBlackholeButton.Text = "Deactivate Orbit Black Hole"
+        else
+            orbitBlackholeButton.Text = "Activate Orbit Black Hole"
+        end
+    end)
+
+    splitBlackholeButton.MouseButton1Click:Connect(function()
+        toggleSplitBlackhole()
+    end)
+
+    -- Update orbit speed when the user inputs a value
+    orbitSpeedTextBox.FocusLost:Connect(function(enterPressed)
+        if enterPressed then
+            local newSpeed = tonumber(orbitSpeedTextBox.Text)
+            if newSpeed then
+                orbitSpeed = newSpeed  -- Update orbit speed globally
+            else
+                orbitSpeedTextBox.Text = "1"  -- Reset to default value if input is invalid
+            end
+        end
+    end)
+
+    -- Update orbit radius when the user inputs a value
+    orbitRadiusTextBox.FocusLost:Connect(function(enterPressed)
+        if enterPressed then
+            local newRadius = tonumber(orbitRadiusTextBox.Text)
+            if newRadius then
+                orbitRadius = newRadius  -- Update orbit radius globally
+            else
+                orbitRadiusTextBox.Text = "15"  -- Reset to default value if input is invalid
+            end
+        end
+    end)
+end
+
+    -- Function to create the UI control frame
+    createControlFrame()
+
+    -- Ensure the GUI persists after death by recreating it when the player respawns
+    LocalPlayer.CharacterAdded:Connect(function(newCharacter)
+        humanoidRootPart = newCharacter:WaitForChild("HumanoidRootPart")
+        createControlFrame()  -- Recreate the control frame with buttons
+    end)
+
+    -- Initial GUI creation
+    createControlFrame()
+    toggleBlackHole()  -- Initially start the black hole
+end
+
+
+--//Services\\--
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local LPlayer = Players.LocalPlayer
+local Mouse = LPlayer:GetMouse()
+
+-- Ensure the player's character is loaded
+if not LPlayer.Character then
+    LPlayer.CharacterAdded:Wait()
+end
+
+-- Function to start the Gravity Tool
+local function startGravityTool(infinityNetwork)
+    local gravityToolActive = false
+    local grabbedPart = nil
+
+    -- Function to start telekinesis on a selected part
+    local function startTelekinesis(part)
+        if grabbedPart then
+            return -- Prevent grabbing multiple parts at once
+        end
+
+        -- Grab the part and apply telekinesis
+        grabbedPart = part
+        local alignPosition = Instance.new("AlignPosition", part)
+        alignPosition.MaxForce = Vector3.new(999999, 999999, 999999)
+        alignPosition.MaxVelocity = math.huge
+        alignPosition.Responsiveness = 200
+
+        local attachment = Instance.new("Attachment", part)
+        alignPosition.Attachment0 = attachment
+
+        local moveTween = nil
+
+        -- Function to continuously move the part with the mouse/touch input
+        local function movePart()
+            RunService.Heartbeat:Connect(function()
+                if grabbedPart then
+                    local targetPosition = Mouse.Hit.Position
+                    local tweenInfo = TweenInfo.new(0.05, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+                    local goal = {Position = targetPosition}
+                    
+                    moveTween = TweenService:Create(grabbedPart, tweenInfo, goal)
+                    moveTween:Play()
+                end
+            end)
+        end
+
+        -- Start moving the part
+        movePart()
+
+        -- Disconnect the part when the player releases the mouse or stops touching the screen
+        local function stopTelekinesis()
+            if moveTween then
+                moveTween:Cancel()
+            end
+            if alignPosition then
+                alignPosition:Destroy()
+            end
+            if attachment then
+                attachment:Destroy()
+            end
+            grabbedPart = nil
+        end
+
+        -- Stop telekinesis on input end
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                stopTelekinesis()
+            end
+        end)
+    end
+
+    -- Function to handle telekinesis activation
+    local function activateTelekinesis()
+        gravityToolActive = true
+
+        -- Detect parts clicked/tapped for telekinesis
+        Mouse.Button1Down:Connect(function()
+            local target = Mouse.Target
+            if target and table.find(infinityNetwork.BaseParts, target) then
+                startTelekinesis(target)
+            end
+        end)
+
+        -- Support for mobile touch input
+        UserInputService.TouchTap:Connect(function(touchPositions, processedByUI)
+            if not processedByUI then
+                local target = Mouse.Target
+                if target and table.find(infinityNetwork.BaseParts, target) then
+                    startTelekinesis(target)
+                end
+            end
+        end)
+    end
+
+    -- Create the tool for gravity control
+    local function createGravityTool()
+        local gravityTool = Instance.new("Tool")
+        gravityTool.Name = "GravityTool"
+        gravityTool.RequiresHandle = false
+        gravityTool.Parent = LPlayer.Backpack
+
+        gravityTool.Equipped:Connect(function()
+            activateTelekinesis()
+        end)
+
+        gravityTool.Unequipped:Connect(function()
+            gravityToolActive = false
+            if grabbedPart then
+                grabbedPart:Destroy() -- Clean up grabbed part if any
+            end
+        end)
+    end
+
+    -- Create and activate the Gravity Tool
+    createGravityTool()
+end
+
+-- Infinity Command (called by ":infinity")
+local function startInfinity()
+    -- Initialize the Infinity Network
+    local infinityNetwork = {
+        BaseParts = {},
+        GravityReductionRadius = 15 -- Radius within which parts will slow down
+    }
+
+    -- Function to exclude certain parts from being added to the network
+    local function shouldExclude(part)
+        -- Exclude the aura, all player parts, and anchored parts
+        if part.Name == "InfinityAura" or part:IsDescendantOf(LPlayer.Character) then
+            return true
+        end
+        for _, player in pairs(Players:GetPlayers()) do
+            if player.Character and part:IsDescendantOf(player.Character) then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Function to add parts to the Infinity network
+    infinityNetwork.RetainPart = function(part)
+        if typeof(part) == "Instance" and part:IsA("BasePart") and part:IsDescendantOf(Workspace) and not shouldExclude(part) then
+            -- Add the part to the network if not already in it
+            if not table.find(infinityNetwork.BaseParts, part) then
+                table.insert(infinityNetwork.BaseParts, part)
+                part.CanCollide = true -- Parts will still collide with other parts
+                part.Massless = false -- Make the parts have mass to feel realistic
+            end
+        end
+    end
+
+    -- Function to apply the slowing/freezing effect
+    local function applySlowEffect(part)
+        local bodyGyro = Instance.new("BodyGyro", part)
+        bodyGyro.MaxTorque = Vector3.new(400000, 400000, 400000) -- Strong torque to prevent movement
+        bodyGyro.CFrame = part.CFrame
+
+        local bodyVelocity = Instance.new("BodyVelocity", part)
+        bodyVelocity.Velocity = Vector3.new(0, 0, 0) -- Stop all velocity
+        bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9) -- Apply max force to halt movement
+    end
+
+    -- Local player and character setup
+    local humanoidRootPart = LPlayer.Character and LPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then
+        return -- Exit if no HumanoidRootPart is found
+    end
+
+    -- Create the aura ball
+    local infinityAura = Instance.new("Part")
+    infinityAura.Name = "InfinityAura"
+    infinityAura.Size = Vector3.new(15, 15, 15) -- Adjust the size of the aura
+    infinityAura.Shape = Enum.PartType.Ball
+    infinityAura.CanCollide = false -- Ensure the aura itself won't collide with parts
+    infinityAura.Anchored = false -- Not anchored
+    infinityAura.Massless = true
+    infinityAura.Transparency = 0.5
+    infinityAura.Color = Color3.fromRGB(0, 255, 255) -- Cyan color for the aura ball
+    infinityAura.Material = Enum.Material.ForceField -- Set material to ForceField
+    infinityAura.CFrame = humanoidRootPart.CFrame
+    infinityAura.Parent = Workspace
+
+    -- Attach the aura to the player (non-anchored)
+    local weldAura = Instance.new("WeldConstraint")
+    weldAura.Part0 = infinityAura
+    weldAura.Part1 = humanoidRootPart
+    weldAura.Parent = infinityAura
+
+    -- Function to detect touch and apply the freezing effect
+    local function detectAndFreezeParts()
+        for index, part in ipairs(infinityNetwork.BaseParts) do
+            if part and part:IsDescendantOf(Workspace) then
+                local distance = (part.Position - infinityAura.Position).Magnitude
+                if distance <= 5 then  -- If part is touching the aura
+                    print("Part touching the aura: " .. part.Name) -- Print the name of the part
+                    applySlowEffect(part) -- Apply the slow effect to freeze it in place
+                end
+            else
+                -- Remove invalid parts from the network
+                table.remove(infinityNetwork.BaseParts, index)
+            end
+        end
+    end
+
+    -- Continuously detect parts touching the aura and apply the freezing effect
+    RunService.Heartbeat:Connect(function()
+        -- Ensure the aura is non-collidable
+        infinityAura.CanCollide = false -- Reset this every frame just in case
+
+        -- Update the aura's position to stay with the player
+        infinityAura.CFrame = humanoidRootPart.CFrame
+
+        -- Detect and freeze parts that touch the aura
+        detectAndFreezeParts()
+    end)
+
+    -- Detect when new parts are added to the workspace and add them to the Infinity network
+    Workspace.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("BasePart") and not shouldExclude(descendant) then
+            infinityNetwork.RetainPart(descendant)
+        end
+    end)
+
+    -- Start the Gravity Tool (Telekinesis feature)
+    startGravityTool(infinityNetwork)
+
+    -- Output for when Infinity is activated
+    print("Infinity and Gravity Tool activated.")
+end
+
+-- Part Control command
+local function partControlCommand()
+    -- Create a draggable GUI frame
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "PartControlGUI"
+    screenGui.Parent = LPlayer:WaitForChild("PlayerGui")
+
+    local controlFrame = Instance.new("Frame")
+    controlFrame.Name = "ControlFrame"
+    controlFrame.Size = UDim2.new(0, 200, 0, 100) -- Adjust size to be smaller
+    controlFrame.Position = UDim2.new(0.5, -100, 0.5, -50) -- Centered
+    controlFrame.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    controlFrame.BackgroundTransparency = 0.3
+    controlFrame.Parent = screenGui
+    controlFrame.Active = true -- Make the frame active to enable dragging
+    controlFrame.Draggable = true -- Make the frame draggable
+
+    -- Button to bring all parts
+    local bringPartsButton = Instance.new("TextButton")
+    bringPartsButton.Name = "BringPartsButton"
+    bringPartsButton.Size = UDim2.new(1, 0, 1, 0) -- Fill the frame
+    bringPartsButton.Text = "Bring All Parts"
+    bringPartsButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    bringPartsButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    bringPartsButton.Parent = controlFrame
+
+    -- Function to add parts to the bubble
+    local function pullPartsToPlayer()
+        local playerPosition = LPlayer.Character.HumanoidRootPart.Position
+        local bubbleRadius = 20 -- Radius for the bubble formation
+        local partsToBring = {} -- Store parts temporarily
+
+        -- Find unanchored parts excluding players
+        for _, part in pairs(Workspace:GetDescendants()) do
+            if part:IsA("BasePart") and not part.Anchored and not part:IsDescendantOf(LPlayer.Character) then
+                -- Check if the part is not attached to an anchored part
+                if not part:IsDescendantOf(part.Parent) or not part.Parent.Anchored then
+                    table.insert(partsToBring, part)
+                end
+            end
+        end
+
+        -- Pull parts toward the player
+        for _, part in ipairs(partsToBring) do
+            local direction = (playerPosition - part.Position).unit -- Calculate direction to the player
+            local forceMagnitude = 50 -- Set the force strength
+            local bodyVelocity = Instance.new("BodyVelocity")
+            bodyVelocity.Velocity = direction * forceMagnitude -- Set velocity towards the player
+            bodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9) -- Apply maximum force
+            bodyVelocity.Parent = part -- Attach the BodyVelocity to the part
+
+            -- Optional: Set a timer to remove BodyVelocity after a short time
+            delay(1, function()
+                bodyVelocity:Destroy() -- Remove the BodyVelocity after 1 second
+            end)
+        end
+
+        -- Optional: Make parts follow the player when they respawn
+        LPlayer.CharacterAdded:Connect(function(character)
+            local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+            for _, part in ipairs(partsToBring) do
+                if part:IsDescendantOf(Workspace) then
+                    part.Position = humanoidRootPart.Position + Vector3.new(0, 5, 0) -- Adjust height above player
+                end
+            end
+        end)
+    end
+
+    -- Connect button to bring all parts
+    bringPartsButton.MouseButton1Click:Connect(pullPartsToPlayer)
+end
+
+if not getgenv().OrbitNetwork then
+    getgenv().OrbitNetwork = {
+        OrbitParts = {},
+        Velocity = Vector3.new(14.46262424, 14.46262424, 14.46262424)
+    }
+end
+
+local function onCharacterAdded(character)
+    createKillBotGui() -- Re-create the GUI when the player respawns
+end
+
+LPlayer.CharacterAdded:Connect(onCharacterAdded)
+
+local function StartKillBots()
+    local selectedKillBotParts = {
+        corePart = nil,
+        redParts = {},
+        orbitPart = nil
+    }
+    local maxRedParts = 6
+    local killbotSelectionMode = false
+    local selectionComplete = false
+    local killBotModel
+    local anchorPart
+    local detectPart
+    local AOPart
+    local attackModeActive = false
+    local normalSpeed = 1
+    local attackSpeed = 0.5 -- Speed is doubled in attack mode
+
+    local function applyForcesToPart(part, targetPosition, targetRotation)
+        if part and part:IsA("BasePart") and not part.Anchored then
+            local bodyPosition = Instance.new("BodyPosition", part)
+            bodyPosition.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+            bodyPosition.Position = targetPosition
+            bodyPosition.D = 10
+            bodyPosition.P = 10000
+
+            local bodyGyro = Instance.new("BodyGyro", part)
+            bodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+            bodyGyro.CFrame = targetRotation
+            bodyGyro.D = 10
+            bodyGyro.P = 5000
+        end
+    end
+
+    local function roamingMode(AnchorPart, speed)
+        local directions = {"Forward", "Left", "Right", "None"}
+        local moveDistance = 20
+        local roamingTime = 0
+
+        local function getRandomDirection()
+            return directions[math.random(1, #directions)]
+        end
+
+        local function getNearestPlayerPosition()
+            local closestPlayerPosition = nil
+            local closestDistance = math.huge
+
+            for _, player in pairs(Players:GetPlayers()) do
+                if player ~= LPlayer and player.Character then
+                    local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+                    if humanoidRootPart then
+                        local distance = (humanoidRootPart.Position - AnchorPart.Position).Magnitude
+                        if distance < closestDistance then
+                            closestDistance = distance
+                            closestPlayerPosition = humanoidRootPart.Position
+                        end
+                    end
+                end
+            end
+
+            return closestPlayerPosition
+        end
+
+        local function moveAnchorPart(direction)
+            local targetPosition
+            local nearestPlayerPosition = getNearestPlayerPosition()
+
+            if direction == "Forward" then
+                targetPosition = AnchorPart.Position + Vector3.new(0, 0, -moveDistance)
+            elseif direction == "Left" then
+                targetPosition = AnchorPart.Position + Vector3.new(-moveDistance, 0, 0)
+            elseif direction == "Right" then
+                targetPosition = AnchorPart.Position + Vector3.new(moveDistance, 0, 0)
+            else
+                targetPosition = AnchorPart.Position
+            end
+
+            if nearestPlayerPosition then
+                local playerDirection = (nearestPlayerPosition - AnchorPart.Position).Unit
+                local influenceFactor = 0.3
+                targetPosition = targetPosition + (playerDirection * influenceFactor * moveDistance)
+            end
+
+            local tweenInfo = TweenInfo.new(speed, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+            local tween = TweenService:Create(AnchorPart, tweenInfo, {Position = targetPosition})
+            tween:Play()
+        end
+
+        RunService.Heartbeat:Connect(function()
+            if roamingTime <= 0 then
+                local currentDirection = getRandomDirection()
+                moveAnchorPart(currentDirection)
+                roamingTime = 2
+            end
+            roamingTime = roamingTime - RunService.Heartbeat:Wait()
+        end)
+    end
+
+    local function followAnchor(AnchorPart, corePart, redParts, detectPart)
+        local redPartsOffsets = {
+            Vector3.new(0, 4, 0),
+            Vector3.new(0, -4, 0),
+            Vector3.new(4, 0, 0),
+            Vector3.new(-4, 0, 0),
+            Vector3.new(0, 0, 4),
+            Vector3.new(0, 0, -4)
+        }
+
+        RunService.Heartbeat:Connect(function()
+            corePart.Position = AnchorPart.Position
+            detectPart.Position = AnchorPart.Position - Vector3.new(0, 20, 0)
+            for index, redPart in ipairs(redParts) do
+                local offset = redPartsOffsets[index]
+                redPart.Position = AnchorPart.Position + offset
+            end
+        end)
+    end
+
+    local function detectNearbyPlayer(detectPart)
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LPlayer and player.Character then
+                local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+                if humanoidRootPart then
+                    local distance = (humanoidRootPart.Position - detectPart.Position).Magnitude
+                    if distance < 15 then
+                        return player
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
+    local function activateAttackMode()
+        local nearbyPlayer = detectNearbyPlayer(detectPart)
+
+        if nearbyPlayer and not attackModeActive then
+            attackModeActive = true
+            local humanoidRootPart = nearbyPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if humanoidRootPart then
+                -- Move the anchor part above the player
+                local targetPosition = humanoidRootPart.Position + Vector3.new(0, 20, 0)
+                local tweenInfo = TweenInfo.new(2, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+                local moveTween = TweenService:Create(anchorPart, tweenInfo, {Position = targetPosition})
+                moveTween:Play()
+
+                moveTween.Completed:Connect(function()
+                    -- Stop the orbit and make AOPart follow the player directly
+                    RunService.Heartbeat:Connect(function()
+                        AOPart.Position = humanoidRootPart.Position
+                    end)
+
+                    -- Fling logic happens via the OrbitPart's existing mechanics
+                    if selectedKillBotParts.orbitPart then
+                        selectedKillBotParts.orbitPart.CFrame = CFrame.new(humanoidRootPart.Position)
+                    end
+
+                    -- After the fling, reset KillBot to roaming mode and normal speed
+                    RunService.Heartbeat:Wait(2) -- Wait for fling to complete
+                    attackModeActive = false
+                    roamingMode(anchorPart, normalSpeed)
+                end)
+            end
+        end
+    end
+
+    RunService.Heartbeat:Connect(function()
+        if not attackModeActive then
+            activateAttackMode()
+        end
+    end)
+
+    local function startOrbitOnYAxis(AOPart, AnchorPart)
+        local orbitRadius = 8
+        local orbitSpeed = 1
+        local angle = 0
+
+        RunService.Heartbeat:Connect(function()
+            angle = angle + orbitSpeed * RunService.Heartbeat:Wait()
+
+            local orbitX = math.cos(angle) * orbitRadius
+            local orbitZ = math.sin(angle) * orbitRadius
+
+            local orbitPosition = AnchorPart.Position + Vector3.new(orbitX, 0, orbitZ)
+            AOPart.Position = orbitPosition
+        end)
+    end
+
+    local function handleOrbitPartInNetwork(orbitPart, AOPart)
+        table.insert(getgenv().OrbitNetwork.OrbitParts, orbitPart)
+
+        RunService.Heartbeat:Connect(function()
+            local orbitPosition = AOPart.Position
+            orbitPart.CFrame = CFrame.new(orbitPosition)
+            orbitPart.CFrame = orbitPart.CFrame * CFrame.Angles(math.rad(math.random(-5, 5)), math.rad(math.random(-5, 5)), math.rad(math.random(-5, 5)))
+        end)
+    end
+
+    local function restartKillBotSelection()
+        selectedKillBotParts = {
+            corePart = nil,
+            redParts = {},
+            orbitPart = nil
+        }
+        killbotSelectionMode = true -- Re-enable selection mode
+    end
+
+local function createKillBotGui()
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "KillbotControlGUI"
+        screenGui.Parent = LPlayer:WaitForChild("PlayerGui")
+
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(0, 270, 0, 260) -- Adjusted size to fit all buttons
+        frame.Position = UDim2.new(0.05, 0, 0.8, 0)
+        frame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+        frame.BackgroundTransparency = 0.3
+        frame.BorderSizePixel = 0
+        frame.Parent = screenGui
+        frame.Active = true
+        frame.Draggable = true
+
+        local frameCorner = Instance.new("UICorner")
+        frameCorner.CornerRadius = UDim.new(0, 10)
+        frameCorner.Parent = frame
+
+        -- Flashing UIStroke
+        local uiStroke = Instance.new("UIStroke")
+        uiStroke.Parent = frame
+        uiStroke.Color = Color3.fromRGB(0, 0, 0)
+        uiStroke.Thickness = 3
+
+        -- Animate the flashing red effect
+        local function flashStroke()
+            local tweenInfo = TweenInfo.new(0.5, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut, -1, true) -- Loop forever
+            local colorTween = TweenService:Create(uiStroke, tweenInfo, {Color = Color3.fromRGB(255, 0, 0)})
+            colorTween:Play()
+        end
+        flashStroke()
+
+        -- Add UIGradient for frame styling
+        local frameGradient = Instance.new("UIGradient")
+        frameGradient.Color = ColorSequence.new{
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 30, 30)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(60, 60, 60))
+        }
+        frameGradient.Parent = frame
+
+        local function createStyledButton(text, positionY)
+            local button = Instance.new("TextButton")
+            button.Size = UDim2.new(0.7, 0, 0.25, 0)
+            button.Position = UDim2.new(0.15, 0, positionY, 0)
+            button.Text = text
+            button.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+            button.TextColor3 = Color3.fromRGB(255, 255, 255)
+            button.Font = Enum.Font.GothamBold
+            button.TextSize = 18
+            button.Parent = frame
+
+            local buttonCorner = Instance.new("UICorner")
+            buttonCorner.CornerRadius = UDim.new(0, 8)
+            buttonCorner.Parent = button
+
+            local buttonGradient = Instance.new("UIGradient")
+            buttonGradient.Color = ColorSequence.new{
+                ColorSequenceKeypoint.new(0, Color3.fromRGB(50, 50, 50)),
+                ColorSequenceKeypoint.new(1, Color3.fromRGB(80, 80, 80))
+            }
+            buttonGradient.Parent = button
+
+            button.MouseEnter:Connect(function()
+                TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(70, 70, 70)}):Play()
+            end)
+
+            button.MouseLeave:Connect(function()
+                TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(50, 50, 50)}):Play()
+            end)
+
+            return button
+        end
+
+        local toggleButton = createStyledButton("Enable KillBot", 0.1)
+        local restartButton = createStyledButton("Restart KillBot Selection", 0.45)
+        local attackOnlyButton = createStyledButton("Attack Only", 0.8)
+
+        toggleButton.MouseButton1Click:Connect(function()
+            killbotSelectionMode = true
+            toggleButton.Text = "KillBot Active"
+        end)
+
+        restartButton.MouseButton1Click:Connect(function()
+            restartKillBotSelection()
+            toggleButton.Text = "Enable KillBot"
+        end)
+
+        attackOnlyButton.MouseButton1Click:Connect(function()
+            attackModeActive = true
+            activateAttackMode()
+        end)
+    end
+
+    createKillBotGui()
+
+    
+
+    local function processKillBotSelection()
+        killBotModel = Instance.new("Model")
+        killBotModel.Name = "KillBot"
+        killBotModel.Parent = Workspace
+
+        anchorPart = Instance.new("Part")
+        anchorPart.Size = Vector3.new(4, 4, 4)
+        anchorPart.Position = selectedKillBotParts.corePart.Position + Vector3.new(0, 20, 0)
+        anchorPart.Anchored = true
+        anchorPart.CanCollide = false
+        anchorPart.BrickColor = BrickColor.new("Bright yellow")
+        anchorPart.Transparency = 0.5
+        anchorPart.Parent = killBotModel
+
+        detectPart = Instance.new("Part")
+        detectPart.Size = Vector3.new(4, 4, 4)
+        detectPart.Position = anchorPart.Position - Vector3.new(0, 20, 0)
+        detectPart.Anchored = true
+        detectPart.CanCollide = false
+        detectPart.Transparency = 1
+        detectPart.Parent = killBotModel
+
+        AOPart = Instance.new("Part")
+        AOPart.Size = Vector3.new(2, 2, 2)
+        AOPart.Position = anchorPart.Position + Vector3.new(8, 0, 0)
+        AOPart.Anchored = false
+        AOPart.CanCollide = false
+        AOPart.BrickColor = BrickColor.new("Bright orange")
+        AOPart.Parent = killBotModel
+
+        applyForcesToPart(selectedKillBotParts.corePart, anchorPart.Position, CFrame.new(anchorPart.Position))
+        selectedKillBotParts.corePart.Parent = killBotModel
+
+        for _, redPart in ipairs(selectedKillBotParts.redParts) do
+            redPart.CanCollide = false
+            redPart.Parent = killBotModel
+        end
+
+        followAnchor(anchorPart, selectedKillBotParts.corePart, selectedKillBotParts.redParts, detectPart)
+        startOrbitOnYAxis(AOPart, anchorPart)
+        handleOrbitPartInNetwork(selectedKillBotParts.orbitPart, AOPart)
+
+        roamingMode(anchorPart, normalSpeed)
+    end
+
+    local function selectCorePart(part)
+        if not selectedKillBotParts.corePart then
+            selectedKillBotParts.corePart = part
+            part.Name = "CorePart"
+            part.BrickColor = BrickColor.new("Bright blue")
+        end
+    end
+
+    local function selectRedPart(part)
+        if #selectedKillBotParts.redParts < maxRedParts then
+            table.insert(selectedKillBotParts.redParts, part)
+            part.Name = "RedPart" .. #selectedKillBotParts.redParts
+            part.BrickColor = BrickColor.new("Bright red")
+        end
+    end
+
+    local function selectOrbitPart(part)
+        if not selectedKillBotParts.orbitPart then
+            selectedKillBotParts.orbitPart = part
+            part.Name = "OrbitPart"
+            part.BrickColor = BrickColor.new("Black")
+            killbotSelectionMode = false
+            processKillBotSelection()
+        end
+    end
+
+
+
+local function selectKillbotPart(part)
+        if killbotSelectionMode then
+            if not part or not part:IsA("BasePart") then
+                return
+            end
+            if part == selectedKillBotParts.corePart or part == selectedKillBotParts.orbitPart or table.find(selectedKillBotParts.redParts, part) then
+                return
+            end
+            if not selectedKillBotParts.corePart then
+                selectCorePart(part)
+            elseif #selectedKillBotParts.redParts < maxRedParts then
+                selectRedPart(part)
+            elseif not selectedKillBotParts.orbitPart then
+                selectOrbitPart(part)
+            end
+        end
+    end
+
+    Mouse.Button1Down:Connect(function()
+        local target = Mouse.Target
+        if target and target:IsA("BasePart") and not target.Anchored then
+            selectKillbotPart(target)
+        end
+    end)
+end
+
+local function processCommand(player, msg)
+    msg = msg:lower()
+
+    -- 1. :bring playername
+    if msg:match("^:bring%s+(.*)$") then
+        local target = msg:match("^:bring%s+(.*)$")
+        if target then
+            local targetPlayer = findPlayerByName(target)
+            if targetPlayer then
+                Module.Bring(targetPlayer)
+            else
+                warn("Player not found for bring command.")
+            end
+        end
+
+    -- 2. :loopfreeze playername
+    elseif msg:match("^:loopfreeze%s+(.*)$") then
+        local target = msg:match("^:loopfreeze%s+(.*)$")
+        if target then
+            Module.LoopFreeze(findPlayerByName(target))
+        end
+
+    -- 3. :permfreeze playername
+    elseif msg:match("^:permfreeze%s+(.*)$") then
+        local target = msg:match("^:permfreeze%s+(.*)$")
+        if target then
+            Module.LoopFreeze(findPlayerByName(target))  -- Adjusted to loopfreeze
+        end
+
+    -- 4. :loopkill playername
+    elseif msg:match("^:loopkill%s+(.*)$") then
+        local target = msg:match("^:loopkill%s+(.*)$")
+        if target then
+            Module.LoopKill(findPlayerByName(target))
+        end
+
+    -- 5. :admin playername
+    elseif msg:match("^:admin%s+(.*)$") then
+        local targetName = msg:match("^:admin%s+(.*)$")
+        if targetName then
+            local targetPlayer = findPlayerByName(targetName)
+            if targetPlayer then
+                grantAdmin(targetPlayer)
+            end
+        end
+
+    -- 6. :aura
+    elseif msg:match("^:aura$") then
+        Module.DestroyAura(20, player)
+
+    -- 7. :unaura
+    elseif msg:match("^:unaura$") then
+        Module.Unaura(player)
+
+    -- 8. :kill all
+    elseif msg:match("^:kill all$") then
+        for _, targetPlayer in pairs(Players:GetPlayers()) do
+            if targetPlayer ~= LPlayer then
+                Module.Kill(targetPlayer)
+            end
+        end
+
+    -- 9. :kill playername
+    elseif msg:match("^:kill%s+(.*)$") then
+        local target = msg:match("^:kill%s+(.*)$")
+        if target then
+            Module.Kill(findPlayerByName(target))
+        end
+
+    -- 10. :freeze all
+    elseif msg:match("^:freeze all$") then
+        for _, targetPlayer in pairs(Players:GetPlayers()) do
+            if targetPlayer ~= LPlayer then
+                Module.Freeze(targetPlayer)
+            end
+        end
+
+    -- 11. :freeze playername
+    elseif msg:match("^:freeze%s+(.*)$") then
+        local target = msg:match("^:freeze%s+(.*)$")
+        if target then
+            Module.Freeze(findPlayerByName(target))
+        end
+
+    -- 12. :tornado
+    elseif msg:match("^:tornado$") then
+        startTornado()
+
+    -- 13. :bringtornado
+    elseif msg:match("^:bringtornado$") then
+        bringTornadoToPlayer()
+
+    -- 14. :untornado
+    elseif msg:match("^:untornado$") then
+        stopTornado()
+
+    -- 15. :classicblackhole or :classicbh
+    elseif msg:match("^:classicblackhole$") or msg:match("^:classicbh$") then
+        startClassicBlackHole(player)  -- Call the function to start the black hole
+
+    -- 16. :pathtornado
+    elseif msg:match("^:pathtornado$") then
+        startPathTornado()  -- Start the tornado moving along a random path
+
+    -- 17. :heal
+    elseif msg == ":heal" then
+        healPlayer()
+
+    -- 18. :infinity
+    elseif msg == ":infinity" then
+       startInfinity()
+
+elseif msg == ":partcontrol" then
+        partControlCommand()
+
+elseif msg == ":killbots" then
+        StartKillBots()
+
+    end
+end
+
+-- Detect and process commands
+LPlayer.Chatted:Connect(function(msg)
+    processCommand(LPlayer, msg)
+end)
+
+-- Allow admins to process commands too
+Players.PlayerAdded:Connect(function(player)
+    player.Chatted:Connect(function(msg)
+        processCommand(player, msg)
+    end)
+end)
+
+-- Also your welcome i bet you were confused
+
+-- Detect clicks/taps to delete objects
+UserInputService.InputBegan:Connect(function(input)
+    if deleteModeActive and input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local target = Mouse.Target
+        if target then
+            Module.Delete(target)
+        end
+    elseif deleteModeActive and input.UserInputType == Enum.UserInputType.Touch then
+        local target = Mouse.Target
+        if target then
+            Module.Delete(target)
+        end
+    end
+end)
+
+-- Heal Functions
+function healPlayer()
+    local interactablesFolder = Workspace:FindFirstChild("Interactables")
+    if not interactablesFolder then return end
+    
+    local healPadsFolder = interactablesFolder:FindFirstChild("HealPads")
+    if not healPadsFolder then return end
+    
+    local healPads = healPadsFolder:GetChildren()
+    if #healPads == 0 then return end
+    
+    local randomHealPad = healPads[math.random(1, #healPads)]
+    local playerRootPart = LPlayer.Character and LPlayer.Character:FindFirstChild("HumanoidRootPart")
+    
+    if playerRootPart then
+        local originalPosition = playerRootPart.CFrame
+        playerRootPart.CFrame = randomHealPad.CFrame
+        wait(0.0000000000000000000000000001)
+        playerRootPart.CFrame = originalPosition
+    end
+end
+
+function enableAutoHeal()
+    autoHealActive = true
+    local character = LPlayer.Character or LPlayer.CharacterAdded:Wait()
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+    if humanoid then
+        humanoid.HealthChanged:Connect(function(health)
+            if autoHealActive and health < humanoid.MaxHealth then
+                healPlayer()
+            end
+        end)
+    end
+end
+
+function disableAutoHeal()
+    autoHealActive = false
+end
